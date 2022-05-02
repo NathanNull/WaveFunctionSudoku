@@ -1,23 +1,35 @@
 # Wave Function Collapse Algorithm
 # Author: Nathan Strong
 # Date: April 4, 2022
-# Description: Runs the wave function collapse
-# algorithm (look it up idk) to solve sudoku puzzles
+# Description: A class that creates/solves a
+# board using the wave function collapse algorithm
 
 import copy
 import math
-from multiprocessing.sharedctypes import Value
 import random
+import abc
+from typing import Generic, TypeVar
 
-digits = "123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+class possibility(abc.ABC):
+    @abc.abstractmethod
+    def isvalid(self, x:int, y:int, board:"board") -> bool:
+        pass
+    @abc.abstractmethod
+    def aschar(self) -> str:
+        pass
 
-class square(list[int]):
-    def __init__(self, allowed_vals:list[int]) -> None:
+TPoss = TypeVar("TPoss", bound=possibility)
+class square(Generic[TPoss], list[TPoss]):
+    def __init__(self, allowed_vals:list[TPoss]) -> None:
         self.extend(allowed_vals)
         self.solved = len(self)==1
+        try:
+            self.allowed_type = type(allowed_vals[0])
+        except:
+            self.allowed_type = None
     
     def __eq__(self, __o: object) -> bool:
-        if type(__o) == int:
+        if self.allowed_type in (type(__o), None):
             if self.solved:
                 return self[0] == __o
             else:
@@ -28,39 +40,41 @@ class square(list[int]):
     def __ne__(self, __o: object) -> bool:
         return not (self == __o)
 
-class board(list[list[square]]):
-    def __init__(self, known:list[list[int]]=None, size:int=9) -> None:
+class board(list[list[square[TPoss]]]):
+    def __init__(self, allowed:list[TPoss], known:list[list[TPoss]]=None, size:tuple[int,int]=(4,6)) -> None:
         """known: grid with -1 for each unknown element\n
-        size: number of numbers tall the grid is, use if you don't know anything. Needs to be square."""
+        size: dimensions of the grid (x, y), use if grid is all unknown"""
+        self.allowed = allowed
+
         if known == None:
-            known = [[-1 for _ in range(size)] for _ in range(size)]
+            known = [[-1 for _ in range(size[0])] for _ in range(size[1])]
         else:
-            size = len(known)
+            size = (len(known[0]), len(known))
         self.size = size
-        self.gridsize = int(math.sqrt(size))
-        if self.gridsize != math.sqrt(size):
-            raise ValueError(f"Size {size} needs to be a square number")
 
         self.clear()
-        for y in range(size):
-            self.append([square([i for i in range(1,size+1) if (known[y][x] in (i, -1))]) for x in range(size)])
+        for y in range(size[1]):
+            self.append([square[TPoss]([itm for itm in allowed if (known[y][x] in (itm, -1))]) for x in range(size[0])])
         self.propagate()
     
     def __str__(self) -> str:
         """Print out the whole board in a legible format"""
-        string_lines = ["-"*73]
+        gridsize = math.ceil(math.sqrt(len(self.allowed)))
+        num_dashes = ((gridsize+1)*2*self.size[0])+1
+        string_lines = ["-"*num_dashes]
         for line in self:
-            for i in range(self.gridsize):
+            for i in range(gridsize):
                 string_line = "|"
                 for sqr in line:
                     string_line = string_line + " "
-                    for j in range(self.gridsize):
+                    for j in range(gridsize):
                         # Selects character based on whether solved, possible, or ruled out
+                        idx = i*gridsize+j
                         string_line = f"{string_line}\
-{digits[i*self.gridsize+j] if i*self.gridsize+j+1 in sqr else ('_' if sqr.solved else ' ')} "
+{self.allowed[idx].aschar() if len(self.allowed)>idx and self.allowed[idx] in sqr else ('_' if sqr.solved else ' ')} "
                     string_line = string_line[:-1]+" |"
                 string_lines.append(string_line)
-            string_lines.append("-"*73)
+            string_lines.append("-"*num_dashes)
         return "\n".join(string_lines)
     
     def __format__(self, __format_spec: str) -> str:
@@ -69,7 +83,7 @@ class board(list[list[square]]):
             for line in self:
                 l = ""
                 for sqr in line:
-                    l = l+(digits[sqr[0]-1] if sqr.solved else "?")
+                    l = l+(sqr[0].aschar() if sqr.solved else "?")
                 lines.append(l)
             return "\n".join(lines)
         else:
@@ -90,21 +104,21 @@ class board(list[list[square]]):
                     return False
         return True
     
-    def issolved(self):
+    def issolved(self) -> bool:
         """Tests if the current board is completely solved"""
-        for x in range(self.size):
-            for y in range(self.size):
+        for x in range(self.size[0]):
+            for y in range(self.size[1]):
                 if not self[y][x].solved:
                     return False
         return True
     
-    def iterate(self):
+    def iterate(self, verbose:bool=False) -> tuple[int, int, TPoss, list[TPoss]]:
         """Performs one 'move' on the board (marks one square),
         then checks to see how that affects the others"""
         # Find the easiest square to solve (the one with the fewest options that isn't already solved)
         lowest_entropy = (-1, -1, 10000)
-        for x in range(self.size):
-            for y in range(self.size):
+        for x in range(self.size[0]):
+            for y in range(self.size[1]):
                 if len(self[y][x]) < lowest_entropy[2] and not self[y][x].solved:
                     lowest_entropy = (x, y, len(self[y][x]))
         sqr = self[lowest_entropy[1]][lowest_entropy[0]]
@@ -117,9 +131,11 @@ class board(list[list[square]]):
         # Solve that square, then return its position, the chosen value, and the removed ones
         l = list(lowest_entropy[:-1])
         l.reverse()
-        print(f"Solving at {l}")
+        if verbose:
+            print(f"Solving at {l}")
         val = random.choice(sqr)
-        print(f"Chose {val}, {'had options' if len(sqr)>1 else 'only choice'}")
+        if verbose:
+            print(f"Chose {val.aschar()}, {'had options' if len(sqr)>1 else 'only choice'}")
         sqr_copy = copy.copy(sqr)
         sqr_copy.remove(val)
         sqr.clear()
@@ -128,42 +144,46 @@ class board(list[list[square]]):
 
         return (lowest_entropy[0], lowest_entropy[1], val, sqr_copy)
     
-    def propagate(self):
+    def propagate(self) -> list[tuple[int, int, TPoss]]:
         """Checks which numbers in the grid are no longer valid and removes them"""
         removed = []
-        for x in range(self.size):
-            for y in range(self.size):
+        for x in range(self.size[0]):
+            for y in range(self.size[1]):
                 sqr = self[y][x]
                 sqr_copy = copy.copy(sqr)
                 for num in sqr_copy:
-                    if not self.isvalid(x, y, num):
+                    if not num.isvalid(x, y, self):
                         sqr.remove(num)
                         removed.append((x, y, num))
         return removed
     
-    def solve(self):
+    def solve(self, verbose:bool=False) -> None:
         # Make a backup in case we get stuck
         original = copy.deepcopy(self)
 
         # Try to solve it 3 times
         for _ in range(3):
             iter = 0
-            changestack = []
-            while (not self.issolved()) and iter<(self.size**2)*2:
+            changestack:list[tuple[tuple[int, int, TPoss, list[TPoss]],list[tuple[int, int, TPoss]]]] = []
+            # As long as the board isn't solved and the iteration limit isn't reached...
+            while (not self.issolved()) and iter<self.size[0]*self.size[1]*2:
                 iter += 1
-                print(f"Iteration #{iter}")
+                if verbose:
+                    print(f"Iteration #{iter}")
 
-                # Iterates and remembers the changes that were made
-                iter_res = self.iterate()
+                # Iterate and remember the changes that were made
+                iter_res = self.iterate(verbose)
                 prop_res = self.propagate()
                 changestack.append((iter_res, prop_res))
 
                 # Weird-looking list comprehension thing to check for any zeros
                 while len([row for row in self if len([itm for itm in row if len(itm)==0])]) != 0:
                     # There's a zero space, backtrack
-                    print("Zero detected, removing incorrect choice")
+                    if verbose:
+                        print("Zero detected, removing incorrect choice")
                     last_iter, last_prop = changestack.pop()
-                    print(f"Choice was {last_iter[2]} at ({last_iter[0]},{last_iter[1]})")
+                    if verbose:
+                        print(f"Choice was {last_iter[2].aschar()} at ({last_iter[0]},{last_iter[1]})")
                     # Fix iteration
                     self[last_iter[1]][last_iter[0]] = square(last_iter[3])
                     self[last_iter[1]][last_iter[0]].solved = False
@@ -174,29 +194,12 @@ class board(list[list[square]]):
                 return
             
             # Hopefully, HOPEFULLY, this part will never be relevant. If it is, something's gone wrong.
-            print("Failed, trying again")
+            if verbose:
+                print("Failed, trying again")
             self.clear()
             self.extend(copy.deepcopy(original))
-        # Even more hopefully, this will never trigger. When it does, I won't know what to do about it.
+        # Even more hopefully, this will never trigger. When it does, I probably won't know what to do about it.
         raise Exception("Houston, we have a problem. (Couldn't solve the board after 3 tries)")
 
-
-def main():
-    board_arr = [
-        [ 5,  3, -1, -1,  7, -1, -1, -1, -1],
-        [ 6, -1, -1,  1,  9,  5, -1, -1, -1],
-        [-1,  9,  8, -1, -1, -1, -1,  6, -1],
-        [ 8, -1, -1, -1,  6, -1, -1, -1,  3],
-        [ 4, -1, -1,  8, -1,  3, -1, -1,  1],
-        [ 7, -1, -1, -1,  2, -1, -1, -1,  6],
-        [-1,  6, -1, -1, -1, -1,  2,  8, -1],
-        [-1, -1, -1,  4,  1,  9, -1, -1,  5],
-        [-1, -1, -1, -1,  8, -1, -1,  7,  9],
-    ]
-    b = board(board_arr)
-    b.solve()
-    print(b)
-    print(f"{b:compact}")
-
 if __name__ == "__main__":
-    main()
+    raise Exception("Hey, don't run this, it's a library! Run example.py instead.")
